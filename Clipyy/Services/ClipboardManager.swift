@@ -11,6 +11,10 @@ final class ClipboardManager {
 
     var searchText: String = ""
 
+    // Cached to avoid rebuilding from UserDefaults on every poll tick
+    private var cachedExcludedApps: Set<String> = []
+    private var excludedAppsNeedsRefresh = true
+
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
         self.lastChangeCount = NSPasteboard.general.changeCount
@@ -263,6 +267,15 @@ final class ClipboardManager {
     }
 
     private var excludedApps: Set<String> {
-        Set(UserDefaults.standard.stringArray(forKey: Constants.excludedAppsKey) ?? [])
+        if excludedAppsNeedsRefresh {
+            cachedExcludedApps = Set(UserDefaults.standard.stringArray(forKey: Constants.excludedAppsKey) ?? [])
+            excludedAppsNeedsRefresh = false
+        }
+        return cachedExcludedApps
+    }
+
+    /// Call when the excluded apps list changes in Settings.
+    func invalidateExcludedAppsCache() {
+        excludedAppsNeedsRefresh = true
     }
 }

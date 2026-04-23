@@ -29,27 +29,8 @@ final class PanelNavigator {
     }
 
     private func handleKey(_ event: NSEvent) -> NSEvent? {
-        // If the user is typing in the search field, let the text field handle it
-        if let responder = NSApp.keyWindow?.firstResponder,
-           responder is NSTextView {
-            // Only intercept Escape and arrow keys from search field
-            switch event.keyCode {
-            case 53: // Escape
-                onDismiss?()
-                return nil
-            case 126: // Up arrow
-                if selectedIndex > 0 { selectedIndex -= 1 }
-                return nil
-            case 125: // Down arrow
-                if selectedIndex < itemCount - 1 { selectedIndex += 1 }
-                return nil
-            case 36: // Return
-                onPasteIndex?(selectedIndex)
-                return nil
-            default:
-                return event
-            }
-        }
+        // Allow text input through to search field, but intercept nav keys
+        let isTextField = NSApp.keyWindow?.firstResponder is NSTextView
 
         switch event.keyCode {
         case 126: // Up arrow
@@ -65,8 +46,42 @@ final class PanelNavigator {
             onDismiss?()
             return nil
         default:
-            return event
+            return isTextField ? event : nil
         }
+    }
+}
+
+// MARK: - Precomputed layout data
+
+/// Holds the result of a single filter + group pass so it isn't recomputed
+/// multiple times per body evaluation.
+private struct PanelLayout {
+    let flat: [ClipboardItem]
+    let grouped: [(group: DateGroup, items: [ClipboardItem])]
+    let indexMap: [PersistentIdentifier: Int] // O(1) index lookup
+
+    init(allItems: [ClipboardItem], searchText: String, pinnedOnly: Bool) {
+        var items = allItems
+
+        if pinnedOnly {
+            items = items.filter { $0.isPinned }
+        }
+
+        if !searchText.isEmpty {
+            items = items.filter {
+                $0.plainText.localizedCaseInsensitiveContains(searchText)
+            }
+        }
+
+        self.flat = items
+        self.grouped = items.groupedByDate()
+
+        var map: [PersistentIdentifier: Int] = [:]
+        map.reserveCapacity(items.count)
+        for (i, item) in items.enumerated() {
+            map[item.id] = i
+        }
+        self.indexMap = map
     }
 }
 
@@ -84,50 +99,33 @@ struct ClipboardPanelView: View {
     let clipboardManager: ClipboardManager
     let onDismiss: () -> Void
 
-    private var filteredItems: [ClipboardItem] {
-        var items = allItems
-
-        if showPinnedOnly {
-            items = items.filter { $0.isPinned }
-        }
-
-        if !searchText.isEmpty {
-            items = items.filter {
-                $0.plainText.localizedCaseInsensitiveContains(searchText)
-            }
-        }
-
-        return items
-    }
-
-    private var flatItems: [ClipboardItem] {
-        filteredItems
-    }
-
-    private var groupedItems: [(group: DateGroup, items: [ClipboardItem])] {
-        filteredItems.groupedByDate()
+    /// Single computation per render pass.
+    private var layout: PanelLayout {
+        PanelLayout(allItems: allItems, searchText: searchText, pinnedOnly: showPinnedOnly)
     }
 
     var body: some View {
+        let data = layout // evaluate once
+
         VStack(spacing: 0) {
             toolbarArea
 
             Divider()
 
-            if groupedItems.isEmpty {
+            if data.grouped.isEmpty {
                 emptyState
             } else {
                 ScrollViewReader { proxy in
                     ScrollView(.vertical, showsIndicators: true) {
                         LazyVStack(alignment: .leading, spacing: 4) {
-                            ForEach(groupedItems, id: \.group.title) { section in
+                            ForEach(data.grouped, id: \.group.title) { section in
                                 DateSectionHeader(title: section.group.title)
 
                                 ForEach(section.items, id: \.id) { item in
-                                    let itemIndex = flatItems.firstIndex(where: { $0.id == item.id }) ?? 0
+                                    let idx = data.indexMap[item.id] ?? 0
                                     ClipboardListRow(
                                         item: item,
-                                        isSelected: itemIndex == navigator.selectedIndex,
+                                        isSelected: idx == navigator.selectedIndex,
                                         onCopy: {
                                             pasteItem(item)
                                         },
@@ -146,9 +144,9 @@ struct ClipboardPanelView: View {
                         .padding(12)
                     }
                     .onChange(of: navigator.selectedIndex) { _, newIndex in
-                        guard newIndex >= 0, newIndex < flatItems.count else { return }
+                        guard newIndex >= 0, newIndex < data.flat.count else { return }
                         withAnimation(.easeOut(duration: 0.1)) {
-                            proxy.scrollTo(flatItems[newIndex].id, anchor: .center)
+                            proxy.scrollTo(data.flat[newIndex].id, anchor: .center)
                         }
                     }
                 }
@@ -158,35 +156,39 @@ struct ClipboardPanelView: View {
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .onAppear {
-            let items = flatItems
-            navigator.itemCount = items.count
+            navigator.itemCount = data.flat.count
             navigator.onDismiss = { [onDismiss] in onDismiss() }
-            navigator.onPasteIndex = { index in
-                guard index >= 0, index < items.count else { return }
-                self.pasteItem(items[index])
+            // Paste callback reads layout.flat at call-time via self
+            navigator.onPasteIndex = { [weak clipboardManager] index in
+                let currentLayout = self.layout
+                guard index >= 0, index < currentLayout.flat.count,
+                      let manager = clipboardManager else { return }
+                onDismiss()
+                manager.copyAndPaste(currentLayout.flat[index])
             }
             navigator.startMonitoring()
         }
         .onDisappear {
             navigator.stopMonitoring()
         }
-        .onChange(of: flatItems.count) { _, newCount in
-            navigator.itemCount = newCount
-            if navigator.selectedIndex >= newCount {
-                navigator.selectedIndex = max(0, newCount - 1)
-            }
-            // Update the paste callback so it uses the latest items
-            let items = flatItems
-            navigator.onPasteIndex = { index in
-                guard index >= 0, index < items.count else { return }
-                self.pasteItem(items[index])
-            }
+        .onChange(of: allItems.count) { _, _ in
+            updateNavigatorCount()
         }
         .onChange(of: searchText) { _, _ in
             navigator.selectedIndex = 0
+            updateNavigatorCount()
         }
         .onChange(of: showPinnedOnly) { _, _ in
             navigator.selectedIndex = 0
+            updateNavigatorCount()
+        }
+    }
+
+    private func updateNavigatorCount() {
+        let count = layout.flat.count
+        navigator.itemCount = count
+        if navigator.selectedIndex >= count {
+            navigator.selectedIndex = max(0, count - 1)
         }
     }
 
@@ -317,7 +319,6 @@ struct ClipboardListRow: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            // Main row — click to paste
             Button(action: onCopy) {
                 HStack(spacing: 10) {
                     Image(systemName: item.itemType.iconName)
@@ -345,7 +346,6 @@ struct ClipboardListRow: View {
             }
             .buttonStyle(.plain)
 
-            // Pin button
             Button(action: onTogglePin) {
                 Image(systemName: item.isPinned ? "pin.fill" : "pin")
                     .font(.system(size: 11))
