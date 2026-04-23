@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import AppKit
 
 @main
 struct ClipyyApp: App {
@@ -51,7 +52,7 @@ struct ClipyyApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("Clipyy", systemImage: "clipboard") {
+        MenuBarExtra("Clipyy", systemImage: "doc.on.clipboard.fill") {
             MenuBarView(
                 clipboardManager: clipboardManager,
                 onOpenPanel: { togglePanel() }

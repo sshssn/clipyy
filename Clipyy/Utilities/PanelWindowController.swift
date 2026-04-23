@@ -3,7 +3,7 @@ import SwiftUI
 
 final class PanelWindowController {
     private var panel: FloatingPanel?
-    private var hostingView: NSHostingView<AnyView>?
+    private var hostingView: SilentHostingView<AnyView>?
     private var clickMonitor: Any?
 
     var isVisible: Bool { panel?.isVisible ?? false }
@@ -20,7 +20,7 @@ final class PanelWindowController {
 
         guard let panel = panel else { return }
 
-        let hostingView = NSHostingView(rootView: AnyView(content))
+        let hostingView = SilentHostingView(rootView: AnyView(content))
         panel.contentView = hostingView
         self.hostingView = hostingView
 
@@ -41,6 +41,10 @@ final class PanelWindowController {
     func hide() {
         stopClickOutsideMonitor()
         panel?.orderOut(nil)
+        // Tear down the SwiftUI view hierarchy so no animations or
+        // timers run while the panel is hidden.
+        panel?.contentView = nil
+        hostingView = nil
     }
 
     func toggle<Content: View>(content: @autoclosure () -> Content) {

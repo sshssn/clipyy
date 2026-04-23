@@ -27,6 +27,9 @@ final class ClipboardManager {
         ) { [weak self] _ in
             self?.checkClipboard()
         }
+        // Let macOS coalesce this timer with other system work.
+        // Reduces idle wake-ups from ~60/min to ~2-3/min.
+        timer?.tolerance = Constants.pollInterval * 0.5
     }
 
     func stopMonitoring() {

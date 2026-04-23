@@ -10,9 +10,14 @@ struct SettingsView: View {
 
             ExcludedAppsView()
                 .tabItem {
-                    Label("Excluded Apps", systemImage: "nosign")
+                    Label("Excluded Apps", systemImage: "hand.raised")
+                }
+
+            AboutSettingsView()
+                .tabItem {
+                    Label("About", systemImage: "info.circle")
                 }
         }
-        .frame(width: 450, height: 300)
+        .frame(width: 480, height: 340)
     }
 }

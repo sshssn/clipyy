@@ -1,7 +1,7 @@
 import Foundation
 
 enum Constants {
-    static let pollInterval: TimeInterval = 0.5
+    static let pollInterval: TimeInterval = 1.0
     static let maxHistoryDefault: Int = 500
     static let panelWidth: CGFloat = 480
     static let panelHeight: CGFloat = 520

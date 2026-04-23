@@ -145,9 +145,7 @@ struct ClipboardPanelView: View {
                     }
                     .onChange(of: navigator.selectedIndex) { _, newIndex in
                         guard newIndex >= 0, newIndex < data.flat.count else { return }
-                        withAnimation(.easeOut(duration: 0.1)) {
-                            proxy.scrollTo(data.flat[newIndex].id, anchor: .center)
-                        }
+                        proxy.scrollTo(data.flat[newIndex].id, anchor: .center)
                     }
                 }
             }
@@ -273,36 +271,18 @@ struct ClipboardPanelView: View {
     }
 }
 
-// MARK: - Animated RGB Border
+// MARK: - Selection Highlight
 
-struct RGBBorderModifier: ViewModifier {
+struct SelectionHighlightModifier: ViewModifier {
     let isSelected: Bool
-    @State private var phase: Double = 0
 
     func body(content: Content) -> some View {
         content
             .overlay(
                 RoundedRectangle(cornerRadius: Constants.rowCornerRadius)
-                    .strokeBorder(
-                        AngularGradient(
-                            colors: [.red, .orange, .yellow, .green, .cyan, .blue, .purple, .red],
-                            center: .center,
-                            angle: .degrees(phase)
-                        ),
-                        lineWidth: isSelected ? 2 : 0
-                    )
+                    .strokeBorder(Color.accentColor, lineWidth: isSelected ? 1.5 : 0)
                     .opacity(isSelected ? 1 : 0)
             )
-            .animation(.easeInOut(duration: 0.2), value: isSelected)
-            .onChange(of: isSelected) { _, selected in
-                if selected {
-                    withAnimation(.linear(duration: 2).repeatForever(autoreverses: false)) {
-                        phase = 360
-                    }
-                } else {
-                    phase = 0
-                }
-            }
     }
 }
 
@@ -319,48 +299,44 @@ struct ClipboardListRow: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            Button(action: onCopy) {
-                HStack(spacing: 10) {
-                    Image(systemName: item.itemType.iconName)
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 24)
+            HStack(spacing: 10) {
+                Image(systemName: item.itemType.iconName)
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24)
 
-                    contentPreview
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                contentPreview
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    VStack(alignment: .trailing, spacing: 2) {
-                        if let appName = item.sourceAppName {
-                            Text(appName)
-                                .font(.system(size: 10))
-                                .foregroundStyle(.tertiary)
-                        }
-                        Text(item.createdAt.shortRelative)
+                VStack(alignment: .trailing, spacing: 2) {
+                    if let appName = item.sourceAppName {
+                        Text(appName)
                             .font(.system(size: 10))
-                            .foregroundStyle(.quaternary)
+                            .foregroundStyle(.tertiary)
                     }
+                    Text(item.createdAt.shortRelative)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.quaternary)
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+            .onTapGesture { onCopy() }
 
-            Button(action: onTogglePin) {
-                Image(systemName: item.isPinned ? "pin.fill" : "pin")
-                    .font(.system(size: 11))
-                    .foregroundStyle(item.isPinned ? .orange : .secondary.opacity(0.5))
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(item.isPinned ? "Unpin" : "Pin")
+            Image(systemName: item.isPinned ? "pin.fill" : "pin")
+                .font(.system(size: 11))
+                .foregroundStyle(item.isPinned ? .orange : .secondary.opacity(0.5))
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+                .onTapGesture { onTogglePin() }
+                .help(item.isPinned ? "Unpin" : "Pin")
         }
         .background(
             RoundedRectangle(cornerRadius: Constants.rowCornerRadius)
-                .fill(isHovering ? Color.white.opacity(0.08) : Color.white.opacity(0.03))
+                .fill(isSelected ? Color.accentColor.opacity(0.12) : (isHovering ? Color.white.opacity(0.08) : Color.white.opacity(0.03)))
         )
-        .modifier(RGBBorderModifier(isSelected: isSelected))
+        .modifier(SelectionHighlightModifier(isSelected: isSelected))
         .onHover { isHovering = $0 }
         .contextMenu {
             Button("Copy & Paste") { onCopy() }
