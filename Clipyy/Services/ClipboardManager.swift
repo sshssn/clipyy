@@ -224,6 +224,27 @@ final class ClipboardManager {
         try? modelContext.save()
     }
 
+    /// Copies the item to clipboard and simulates Cmd+V to paste into the active app.
+    func copyAndPaste(_ item: ClipboardItem) {
+        copyToClipboard(item)
+
+        // Delay to let the panel close and focus return to the previous app
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            Self.simulatePaste()
+        }
+    }
+
+    private static func simulatePaste() {
+        let source = CGEventSource(stateID: CGEventSourceStateID.combinedSessionState)
+        // kVK_ANSI_V = 0x09
+        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
+        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
+        keyDown?.flags = CGEventFlags.maskCommand
+        keyUp?.flags = CGEventFlags.maskCommand
+        keyDown?.post(tap: CGEventTapLocation.cghidEventTap)
+        keyUp?.post(tap: CGEventTapLocation.cghidEventTap)
+    }
+
     func deleteItem(_ item: ClipboardItem) {
         modelContext.delete(item)
         try? modelContext.save()

@@ -21,7 +21,6 @@ struct SearchBarView: View {
             }
         }
         .padding(10)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .glassEffect(in: .rect(cornerRadius: 8))
     }
 }

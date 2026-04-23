@@ -45,6 +45,22 @@ enum DateGroup: Hashable, Comparable {
     }
 }
 
+extension Date {
+    /// Static relative time string (e.g. "just now", "3m", "2h", "5d")
+    var shortRelative: String {
+        let seconds = Int(Date().timeIntervalSince(self))
+        if seconds < 60 { return "just now" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h" }
+        let days = hours / 24
+        if days < 30 { return "\(days)d" }
+        let months = days / 30
+        return "\(months)mo"
+    }
+}
+
 extension Array where Element == ClipboardItem {
     func groupedByDate() -> [(group: DateGroup, items: [ClipboardItem])] {
         let grouped = Dictionary(grouping: self) { DateGroup.from(date: $0.createdAt) }

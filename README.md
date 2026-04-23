@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/platform-macOS_15%2B-000000?style=flat&logo=apple&logoColor=white" alt="macOS 15+" />
+  <img src="https://img.shields.io/badge/platform-macOS_26%2B-000000?style=flat&logo=apple&logoColor=white" alt="macOS 26+" />
   <img src="https://img.shields.io/badge/swift-5.0-F05138?style=flat&logo=swift&logoColor=white" alt="Swift 5.0" />
   <img src="https://img.shields.io/badge/UI-SwiftUI-007AFF?style=flat&logo=swift&logoColor=white" alt="SwiftUI" />
   <img src="https://img.shields.io/badge/storage-SwiftData-34C759?style=flat" alt="SwiftData" />
@@ -36,9 +36,10 @@ Inspired by [Paste](https://pasteapp.io/), Clipyy is built entirely with native 
 - Source app tracking — see which app each item was copied from
 
 **Floating Panel**
-- Global keyboard shortcut (`Cmd + Shift + V`) opens a floating panel from any app
-- Non-activating panel design — the panel does not steal focus from your current app, so you can paste immediately after selecting an item
-- Horizontal scrollable card grid grouped by date (Today, Yesterday, This Week, older)
+- Global keyboard shortcut (`Cmd + Shift + Z`) opens a floating panel from any app
+- Non-activating panel design — the panel does not steal focus from your current app
+- Auto-paste — selecting an item copies it and automatically pastes into the active field
+- Vertical list grouped by date (Today, Yesterday, This Week, older)
 - Visual previews: text snippets, image thumbnails, URL breakdowns, file icons, color swatches
 
 **Search and Organization**
@@ -48,8 +49,8 @@ Inspired by [Paste](https://pasteapp.io/), Clipyy is built entirely with native 
 
 **Menu Bar Integration**
 - Lives in the menu bar — no Dock icon, no window clutter
-- Quick-access popover showing the 10 most recent items
-- One-click copy from the menu bar dropdown
+- Quick-access dropdown showing the 10 most recent items
+- One-click copy from the menu bar
 
 **Settings**
 - Configurable history limit (50 to 5,000 items)
@@ -68,7 +69,7 @@ Inspired by [Paste](https://pasteapp.io/), Clipyy is built entirely with native 
 
 | Requirement | Version |
 |---|---|
-| macOS | 15.0 or later |
+| macOS | 26.0 or later |
 | Xcode | 26.0 or later |
 | Swift | 5.0 |
 
@@ -101,17 +102,17 @@ On first launch, macOS will prompt for **Accessibility** access (required for th
 
 | Action | How |
 |---|---|
-| Open floating panel | `Cmd + Shift + V` |
-| Open menu bar popover | Click the clipboard icon in the menu bar |
-| Copy an item back to clipboard | Click on any card or list item |
-| Copy as plain text | Right-click a card > Copy as Plain Text |
-| Pin / unpin an item | Right-click a card > Pin |
+| Open floating panel | `Cmd + Shift + Z` |
+| Open menu bar dropdown | Click the clipboard icon in the menu bar |
+| Paste an item | Click any row — copies and auto-pastes into the active app |
+| Copy as plain text | Right-click > Copy as Plain Text |
+| Pin / unpin an item | Right-click > Pin |
 | Search history | Type in the search bar at the top of the panel |
 | Filter pinned items | Click the pin icon in the panel toolbar |
 | Clear history | Click the trash icon in the panel toolbar |
-| Open settings | Menu bar popover > Preferences... |
+| Open settings | Menu bar dropdown > Settings... |
 | Close panel | `Escape` or click outside |
-| Quit | Menu bar popover > Quit |
+| Quit | Menu bar dropdown > Quit Clipyy |
 
 ---
 
@@ -120,7 +121,6 @@ On first launch, macOS will prompt for **Accessibility** access (required for th
 ```
 Clipyy/
 ├── ClipyyApp.swift                 App entry point, MenuBarExtra scene, SwiftData container
-├── AppDelegate.swift               Hides app from Dock (accessory activation policy)
 │
 ├── Models/
 │   ├── ClipboardItem.swift         Core SwiftData model with external image storage
@@ -128,26 +128,17 @@ Clipyy/
 │   └── Pinboard.swift              Pinboard model with inverse relationship to items
 │
 ├── Services/
-│   ├── ClipboardManager.swift      NSPasteboard polling, content extraction, dedup, persistence
-│   └── HotkeyManager.swift         Global + local NSEvent monitors for Cmd+Shift+V
+│   ├── ClipboardManager.swift      NSPasteboard polling, content extraction, dedup, auto-paste
+│   └── HotkeyManager.swift         System-wide Carbon hotkey for Cmd+Shift+Z
 │
 ├── Views/
-│   ├── Cards/
-│   │   ├── TextCardView.swift      Text snippet preview
-│   │   ├── ImageCardView.swift     Image thumbnail preview
-│   │   ├── URLCardView.swift       URL with host extraction
-│   │   ├── FileCardView.swift      File name and extension
-│   │   └── ColorCardView.swift     Color swatch with hex code
-│   │
 │   ├── Panel/
-│   │   ├── ClipboardPanelView.swift    Main panel: search, date groups, toolbar
-│   │   ├── ClipboardCardView.swift     Unified card wrapper with hover and tap
-│   │   ├── ClipboardRowView.swift      Horizontal scrollable row per date group
+│   │   ├── ClipboardPanelView.swift    Main panel: search, date groups, vertical list, toolbar
 │   │   ├── SearchBarView.swift         Search field with clear button
 │   │   └── DateSectionHeader.swift     Date group labels
 │   │
 │   ├── MenuBar/
-│   │   └── MenuBarView.swift       Menu bar popover with recent items
+│   │   └── MenuBarView.swift       Menu bar dropdown with recent items
 │   │
 │   └── Settings/
 │       ├── SettingsView.swift       Tab-based preferences window
@@ -156,9 +147,9 @@ Clipyy/
 │
 └── Utilities/
     ├── Constants.swift             App-wide configuration values
-    ├── DateFormatting.swift         Date grouping logic
+    ├── DateFormatting.swift         Date grouping and relative time formatting
     ├── PanelWindow.swift           NSPanel subclass (non-activating, floating)
-    └── PanelWindowController.swift Panel lifecycle and positioning
+    └── PanelWindowController.swift Panel lifecycle, positioning, click-outside dismiss
 ```
 
 ### Design Decisions
@@ -185,7 +176,7 @@ Clipyy/
 | Hashing | CryptoKit (`SHA256`) |
 | Window Management | AppKit (`NSPanel`) |
 | Login Item | ServiceManagement (`SMAppService`) |
-| Global Hotkey | AppKit (`NSEvent` monitors) |
+| Global Hotkey | Carbon (`RegisterEventHotKey`) |
 
 ---
 

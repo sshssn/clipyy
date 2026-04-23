@@ -4,6 +4,7 @@ import SwiftUI
 final class PanelWindowController {
     private var panel: FloatingPanel?
     private var hostingView: NSHostingView<AnyView>?
+    private var clickMonitor: Any?
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
@@ -34,9 +35,11 @@ final class PanelWindowController {
         }
 
         panel.makeKeyAndOrderFront(nil)
+        startClickOutsideMonitor()
     }
 
     func hide() {
+        stopClickOutsideMonitor()
         panel?.orderOut(nil)
     }
 
@@ -45,6 +48,27 @@ final class PanelWindowController {
             hide()
         } else {
             show(content: content())
+        }
+    }
+
+    // MARK: - Click Outside to Dismiss
+
+    private func startClickOutsideMonitor() {
+        stopClickOutsideMonitor()
+        clickMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
+            guard let self = self, let panel = self.panel, panel.isVisible else { return }
+            // Global monitor only fires for clicks OUTSIDE the app's windows,
+            // so any global click means the user clicked away from the panel.
+            self.hide()
+        }
+    }
+
+    private func stopClickOutsideMonitor() {
+        if let monitor = clickMonitor {
+            NSEvent.removeMonitor(monitor)
+            clickMonitor = nil
         }
     }
 }

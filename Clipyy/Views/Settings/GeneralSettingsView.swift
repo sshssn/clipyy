@@ -24,7 +24,7 @@ struct GeneralSettingsView: View {
             }
 
             Section("Keyboard Shortcut") {
-                Text("Cmd + Shift + V to open panel")
+                Text("Cmd + Shift + Z to open panel")
                     .foregroundStyle(.secondary)
             }
         }

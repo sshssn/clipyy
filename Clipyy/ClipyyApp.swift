@@ -3,13 +3,10 @@ import SwiftData
 
 @main
 struct ClipyyApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-
+    private let modelContainer: ModelContainer
     @State private var clipboardManager: ClipboardManager
     @State private var panelController: PanelWindowController
     @State private var hotkeyManager: HotkeyManager
-
-    private let modelContainer: ModelContainer
 
     init() {
         let schema = Schema([ClipboardItem.self, Pinboard.self])
@@ -32,36 +29,36 @@ struct ClipyyApp: App {
             let hotkey = HotkeyManager()
             self._hotkeyManager = State(initialValue: hotkey)
 
-            // Start clipboard monitoring immediately at launch
-            manager.startMonitoring()
+            // Defer Timer and NSEvent registration to after the app run loop is ready.
+            // Starting these in init() can interfere with MenuBarExtra setup.
+            DispatchQueue.main.async {
+                manager.startMonitoring()
 
-            // Set up and register the global hotkey at launch
-            hotkey.onToggle = {
-                panel.toggle(
-                    content: ClipboardPanelView(
-                        clipboardManager: manager,
-                        onDismiss: { panel.hide() }
+                hotkey.onToggle = {
+                    panel.toggle(
+                        content: ClipboardPanelView(
+                            clipboardManager: manager,
+                            onDismiss: { panel.hide() }
+                        )
+                        .modelContainer(container)
                     )
-                    .modelContainer(container)
-                )
+                }
+                hotkey.register()
             }
-            hotkey.register()
         } catch {
             fatalError("Failed to create ModelContainer: \(error)")
         }
     }
 
     var body: some Scene {
-        MenuBarExtra {
+        MenuBarExtra("Clipyy", systemImage: "clipboard") {
             MenuBarView(
                 clipboardManager: clipboardManager,
                 onOpenPanel: { togglePanel() }
             )
             .modelContainer(modelContainer)
-        } label: {
-            Image(systemName: "clipboard")
         }
-        .menuBarExtraStyle(.window)
+        .menuBarExtraStyle(.menu)
 
         Settings {
             SettingsView()

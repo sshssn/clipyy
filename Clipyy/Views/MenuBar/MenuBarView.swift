@@ -13,97 +13,40 @@ struct MenuBarView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Header
-            HStack {
-                Text("Clipyy")
-                    .font(.headline)
-                Spacer()
-                Button("Open Panel") {
-                    onOpenPanel()
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.blue)
-                .font(.caption)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-
-            Divider()
-
-            // Recent items list
-            if displayItems.isEmpty {
-                Text("No items yet")
-                    .foregroundStyle(.secondary)
-                    .padding()
-                    .frame(maxWidth: .infinity)
-            } else {
-                ScrollView {
-                    VStack(spacing: 2) {
-                        ForEach(displayItems, id: \.id) { item in
-                            MenuBarItemRow(item: item) {
-                                clipboardManager.copyToClipboard(item)
-                            }
-                        }
-                    }
-                    .padding(4)
-                }
-                .frame(maxHeight: 350)
-            }
-
-            Divider()
-
-            // Footer
-            HStack {
-                Button("Preferences...") {
-                    NSApp.sendAction(Selector(("showSettingsWindow:")),
-                                     to: nil, from: nil)
-                }
-                .buttonStyle(.plain)
-                .font(.caption)
-
-                Spacer()
-
-                Button("Quit") {
-                    NSApplication.shared.terminate(nil)
-                }
-                .buttonStyle(.plain)
-                .font(.caption)
-                .foregroundStyle(.red)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+        // Open the full floating panel
+        Button("Show Clipyy Panel") {
+            onOpenPanel()
         }
-        .frame(width: 300)
-    }
-}
+        .keyboardShortcut("z", modifiers: [.command, .shift])
 
-struct MenuBarItemRow: View {
-    let item: ClipboardItem
-    let onSelect: () -> Void
+        Divider()
 
-    var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 8) {
-                Image(systemName: item.itemType.iconName)
-                    .frame(width: 16)
-                    .foregroundStyle(.secondary)
-
-                Text(item.plainText)
-                    .lineLimit(1)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.primary)
-
-                Spacer()
-
-                Text(item.createdAt, style: .relative)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
+        // Recent clipboard items
+        if displayItems.isEmpty {
+            Text("No items yet")
+        } else {
+            ForEach(displayItems, id: \.id) { item in
+                Button(action: {
+                    clipboardManager.copyToClipboard(item)
+                }) {
+                    Label(
+                        String(item.plainText.prefix(60)),
+                        systemImage: item.itemType.iconName
+                    )
+                }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+
+        Divider()
+
+        SettingsLink {
+            Text("Settings...")
+        }
+        .keyboardShortcut(",", modifiers: .command)
+
+        Button("Quit Clipyy") {
+            NSApplication.shared.terminate(nil)
+        }
+        .keyboardShortcut("q", modifiers: .command)
     }
 }
