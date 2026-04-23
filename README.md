@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS_26%2B-000000?style=flat&logo=apple&logoColor=white" alt="macOS 26+" />
-  <img src="https://img.shields.io/badge/swift-5.0-F05138?style=flat&logo=swift&logoColor=white" alt="Swift 5.0" />
+  <img src="https://img.shields.io/badge/swift-6-F05138?style=flat&logo=swift&logoColor=white" alt="Swift 6" />
   <img src="https://img.shields.io/badge/UI-SwiftUI-007AFF?style=flat&logo=swift&logoColor=white" alt="SwiftUI" />
   <img src="https://img.shields.io/badge/storage-SwiftData-34C759?style=flat" alt="SwiftData" />
   <img src="https://img.shields.io/github/license/sshssn/clipyy?style=flat" alt="License" />
@@ -39,8 +39,11 @@ Inspired by [Paste](https://pasteapp.io/), Clipyy is built entirely with native 
 - Global keyboard shortcut (`Cmd + Shift + Z`) opens a floating panel from any app
 - Non-activating panel design — the panel does not steal focus from your current app
 - Auto-paste — selecting an item copies it and automatically pastes into the active field
+- Arrow key navigation with animated RGB selection border
+- Press Enter to paste the selected item
 - Vertical list grouped by date (Today, Yesterday, This Week, older)
 - Visual previews: text snippets, image thumbnails, URL breakdowns, file icons, color swatches
+- Inline pin button on each row
 
 **Search and Organization**
 - Real-time search across your entire clipboard history
@@ -71,9 +74,9 @@ Inspired by [Paste](https://pasteapp.io/), Clipyy is built entirely with native 
 |---|---|
 | macOS | 26.0 or later |
 | Xcode | 26.0 or later |
-| Swift | 5.0 |
+| Swift | 6 |
 
-No third-party dependencies. The project uses only Apple frameworks: SwiftUI, SwiftData, AppKit, CryptoKit, ServiceManagement.
+No third-party dependencies. The project uses only Apple frameworks: SwiftUI, SwiftData, AppKit, CoreGraphics, CryptoKit, Carbon, ServiceManagement.
 
 ---
 
@@ -104,9 +107,9 @@ On first launch, macOS will prompt for **Accessibility** access (required for th
 |---|---|
 | Open floating panel | `Cmd + Shift + Z` |
 | Open menu bar dropdown | Click the clipboard icon in the menu bar |
-| Paste an item | Click any row — copies and auto-pastes into the active app |
-| Copy as plain text | Right-click > Copy as Plain Text |
-| Pin / unpin an item | Right-click > Pin |
+| Paste an item | Click any row or press `Enter` — copies and auto-pastes into the active app |
+| Navigate items | `Up` / `Down` arrow keys |
+| Pin / unpin an item | Click the pin icon on any row |
 | Search history | Type in the search bar at the top of the panel |
 | Filter pinned items | Click the pin icon in the panel toolbar |
 | Clear history | Click the trash icon in the panel toolbar |
@@ -170,11 +173,14 @@ Clipyy/
 
 | Component | Technology |
 |---|---|
-| UI Framework | SwiftUI |
-| Persistence | SwiftData |
+| Language | Swift 6 with strict concurrency |
+| UI Framework | SwiftUI with Liquid Glass |
+| Persistence | SwiftData (`@Model`, `@Query`, external storage) |
 | Clipboard Access | AppKit (`NSPasteboard`) |
 | Hashing | CryptoKit (`SHA256`) |
-| Window Management | AppKit (`NSPanel`) |
+| Window Management | AppKit (`NSPanel`, non-activating) |
+| Keyboard Navigation | AppKit (`NSEvent` local monitors) |
+| Auto-Paste | CoreGraphics (`CGEvent` key simulation) |
 | Login Item | ServiceManagement (`SMAppService`) |
 | Global Hotkey | Carbon (`RegisterEventHotKey`) |
 
