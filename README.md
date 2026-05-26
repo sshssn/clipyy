@@ -35,12 +35,22 @@ Inspired by [Paste](https://pasteapp.io/), Clipyy is built entirely with native 
 - SHA-256 deduplication — re-copying the same content moves it to the top instead of creating duplicates
 - Source app tracking — see which app each item was copied from
 
+**Smart Categorization**
+- Automatic content categorization into Text, Code, Links, Images, Sensitive, and Files
+- Detects API keys, JWT tokens, PEM certificates, passwords, and other secrets as Sensitive
+- Code detection via keyword scoring (functions, classes, brackets, indentation patterns)
+- Category tab bar for filtering — all tabs always visible, dimmed when empty
+- Right-click context menu to manually reassign categories
+- Sensitive items are auto-masked with a reveal toggle
+
 **Floating Panel**
 - Global keyboard shortcut (`Cmd + Shift + Z`) opens a floating panel from any app
 - Non-activating panel design — the panel does not steal focus from your current app
 - Auto-paste — selecting an item copies it and automatically pastes into the active field
-- Arrow key navigation with animated RGB selection border
+- Arrow key navigation with accent-colored selection border
 - Press Enter to paste the selected item
+- Pagination with configurable page size (25 items per page)
+- Expandable rows for long content with full text view and character count
 - Vertical list grouped by date (Today, Yesterday, This Week, older)
 - Visual previews: text snippets, image thumbnails, URL breakdowns, file icons, color swatches
 - Inline pin button on each row
@@ -48,12 +58,18 @@ Inspired by [Paste](https://pasteapp.io/), Clipyy is built entirely with native 
 **Search and Organization**
 - Real-time search across your entire clipboard history
 - Pin frequently used items so they are never automatically deleted
-- Filter to show only pinned items
+- Filter by category or show only pinned items
 
 **Menu Bar Integration**
 - Lives in the menu bar — no Dock icon, no window clutter
 - Quick-access dropdown showing the 10 most recent items
 - One-click copy from the menu bar
+
+**Performance**
+- Efficient image thumbnails via ImageIO (`CGImageSourceCreateThumbnailAtIndex`) — no full-size decoding for previews
+- Paginated display to keep the panel responsive with large histories
+- Optimized dedup queries with `fetchLimit`
+- Timer tolerance for energy-efficient polling
 
 **Settings**
 - Configurable history limit (50 to 5,000 items)
@@ -76,7 +92,7 @@ Inspired by [Paste](https://pasteapp.io/), Clipyy is built entirely with native 
 | Xcode | 26.0 or later |
 | Swift | 6 |
 
-No third-party dependencies. The project uses only Apple frameworks: SwiftUI, SwiftData, AppKit, CoreGraphics, CryptoKit, Carbon, ServiceManagement.
+No third-party dependencies. The project uses only Apple frameworks: SwiftUI, SwiftData, AppKit, CoreGraphics, CryptoKit, ImageIO, Carbon, ServiceManagement.
 
 ---
 
@@ -111,6 +127,11 @@ On first launch, macOS will prompt for **Accessibility** access (required for th
 | Navigate items | `Up` / `Down` arrow keys |
 | Pin / unpin an item | Click the pin icon on any row |
 | Search history | Type in the search bar at the top of the panel |
+| Filter by category | Click a category tab (Text, Code, Links, Images, Sensitive, Files) |
+| Change item category | Right-click an item > Set Category |
+| Reveal sensitive item | Click the eye icon or right-click > Reveal Content |
+| Expand long content | Click the chevron icon on items with 100+ characters |
+| Navigate pages | Use the prev/next arrows in the pagination footer |
 | Filter pinned items | Click the pin icon in the panel toolbar |
 | Clear history | Click the trash icon in the panel toolbar |
 | Open settings | Menu bar dropdown > Settings... |
@@ -128,15 +149,16 @@ Clipyy/
 ├── Models/
 │   ├── ClipboardItem.swift         Core SwiftData model with external image storage
 │   ├── ClipboardItemType.swift     Content type enum (text, image, URL, file, color, RTF)
+│   ├── ContentCategory.swift       Smart content categorization with auto-detection
 │   └── Pinboard.swift              Pinboard model with inverse relationship to items
 │
 ├── Services/
-│   ├── ClipboardManager.swift      NSPasteboard polling, content extraction, dedup, auto-paste
+│   ├── ClipboardManager.swift      NSPasteboard polling, content extraction, dedup, thumbnails, auto-paste
 │   └── HotkeyManager.swift         System-wide Carbon hotkey for Cmd+Shift+Z
 │
 ├── Views/
 │   ├── Panel/
-│   │   ├── ClipboardPanelView.swift    Main panel: search, date groups, vertical list, toolbar
+│   │   ├── ClipboardPanelView.swift    Main panel: search, categories, pagination, expandable rows
 │   │   ├── SearchBarView.swift         Search field with clear button
 │   │   └── DateSectionHeader.swift     Date group labels
 │   │
@@ -159,7 +181,7 @@ Clipyy/
 
 **NSPanel instead of SwiftUI Window** — The floating panel uses a custom `NSPanel` with the `.nonactivatingPanel` style mask. This is critical: without it, clicking the panel would steal focus from the user's current app, breaking the copy-paste workflow.
 
-**Timer-based polling** — macOS does not provide push notifications for clipboard changes. Clipyy polls `NSPasteboard.general.changeCount` every 0.5 seconds, which is fast enough to feel instantaneous while using negligible CPU.
+**Timer-based polling** — macOS does not provide push notifications for clipboard changes. Clipyy polls `NSPasteboard.general.changeCount` every 1 second with timer tolerance for energy efficiency, which is fast enough to feel instantaneous while using negligible CPU.
 
 **SwiftData with external storage** — Images copied to the clipboard (screenshots, etc.) can be several megabytes each. The `@Attribute(.externalStorage)` annotation on `imageData` tells SwiftData to write large blobs to disk rather than inline in the SQLite database, preventing database bloat.
 
@@ -178,6 +200,7 @@ Clipyy/
 | Persistence | SwiftData (`@Model`, `@Query`, external storage) |
 | Clipboard Access | AppKit (`NSPasteboard`) |
 | Hashing | CryptoKit (`SHA256`) |
+| Thumbnails | ImageIO (`CGImageSource`) |
 | Window Management | AppKit (`NSPanel`, non-activating) |
 | Keyboard Navigation | AppKit (`NSEvent` local monitors) |
 | Auto-Paste | CoreGraphics (`CGEvent` key simulation) |

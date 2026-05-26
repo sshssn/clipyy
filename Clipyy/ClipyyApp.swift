@@ -34,6 +34,7 @@ struct ClipyyApp: App {
             // Starting these in init() can interfere with MenuBarExtra setup.
             DispatchQueue.main.async {
                 manager.startMonitoring()
+                manager.migrateCategoriesIfNeeded()
 
                 hotkey.onToggle = {
                     panel.toggle(
@@ -52,7 +53,7 @@ struct ClipyyApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("Clipyy", systemImage: "doc.on.clipboard.fill") {
+        MenuBarExtra("Clipyy", systemImage: "paperclip") {
             MenuBarView(
                 clipboardManager: clipboardManager,
                 onOpenPanel: { togglePanel() }

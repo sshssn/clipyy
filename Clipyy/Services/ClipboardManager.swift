@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import SwiftData
 import CryptoKit
+import ImageIO
 
 @Observable
 final class ClipboardManager {
@@ -11,7 +12,6 @@ final class ClipboardManager {
 
     var searchText: String = ""
 
-    // Cached to avoid rebuilding from UserDefaults on every poll tick
     private var cachedExcludedApps: Set<String> = []
     private var excludedAppsNeedsRefresh = true
 
@@ -27,8 +27,6 @@ final class ClipboardManager {
         ) { [weak self] _ in
             self?.checkClipboard()
         }
-        // Let macOS coalesce this timer with other system work.
-        // Reduces idle wake-ups from ~60/min to ~2-3/min.
         timer?.tolerance = Constants.pollInterval * 0.5
     }
 
@@ -57,7 +55,6 @@ final class ClipboardManager {
         let bundleID = sourceApp?.bundleIdentifier
         let appName = sourceApp?.localizedName
 
-        // Priority: image > URL > file > color > text
         if let imageData = extractImage(from: pasteboard) {
             saveItem(type: .image, imageData: imageData,
                      plainText: "[Image]",
@@ -128,6 +125,22 @@ final class ClipboardManager {
         return nil
     }
 
+    // MARK: - Thumbnails
+
+    private func generateThumbnail(from imageData: Data, maxDimension: CGFloat = 64) -> Data? {
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxDimension,
+            kCGImageSourceCreateThumbnailWithTransform: true
+        ]
+        guard let source = CGImageSourceCreateWithData(imageData as CFData, nil),
+              let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return nil
+        }
+        let rep = NSBitmapImageRep(cgImage: cgImage)
+        return rep.representation(using: .jpeg, properties: [.compressionFactor: 0.7])
+    }
+
     // MARK: - Persistence
 
     private func saveItem(
@@ -149,24 +162,33 @@ final class ClipboardManager {
         let hash = SHA256.hash(data: hashInput)
         let contentHash = hash.map { String(format: "%02x", $0) }.joined()
 
-        // Deduplicate: if same hash exists, move it to now
-        let descriptor = FetchDescriptor<ClipboardItem>(
+        var dedupDescriptor = FetchDescriptor<ClipboardItem>(
             predicate: #Predicate { $0.contentHash == contentHash }
         )
-        if let existing = try? modelContext.fetch(descriptor).first {
+        dedupDescriptor.fetchLimit = 1
+        if let existing = try? modelContext.fetch(dedupDescriptor).first {
             existing.createdAt = Date()
             try? modelContext.save()
             return
+        }
+
+        let detectedCategory = ContentCategory.detect(text: plainText, type: type)
+
+        var thumbnail: Data? = nil
+        if type == .image, let imgData = imageData {
+            thumbnail = generateThumbnail(from: imgData)
         }
 
         let item = ClipboardItem(
             type: type,
             textContent: textContent,
             imageData: imageData,
+            thumbnailData: thumbnail,
             plainText: plainText,
             contentHash: contentHash,
             sourceAppBundleID: bundleID,
-            sourceAppName: appName
+            sourceAppName: appName,
+            category: detectedCategory
         )
         modelContext.insert(item)
         try? modelContext.save()
@@ -190,6 +212,29 @@ final class ClipboardManager {
             }
             try? modelContext.save()
         }
+    }
+
+    func migrateCategoriesIfNeeded() {
+        let key = "dataMigration_v2"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+
+        let descriptor = FetchDescriptor<ClipboardItem>()
+        guard let items = try? modelContext.fetch(descriptor) else { return }
+        var changed = false
+        for item in items {
+            let detected = ContentCategory.detect(text: item.plainText, type: item.itemType)
+            if item.categoryRaw != detected.rawValue {
+                item.categoryRaw = detected.rawValue
+                changed = true
+            }
+            if item.itemType == .image && item.thumbnailData == nil,
+               let imgData = item.imageData {
+                item.thumbnailData = generateThumbnail(from: imgData)
+                changed = true
+            }
+        }
+        if changed { try? modelContext.save() }
+        UserDefaults.standard.set(true, forKey: key)
     }
 
     // MARK: - Public API
@@ -224,18 +269,15 @@ final class ClipboardManager {
             break
         }
 
-        // Prevent re-capturing our own paste
         lastChangeCount = pasteboard.changeCount
 
         item.createdAt = Date()
         try? modelContext.save()
     }
 
-    /// Copies the item to clipboard and simulates Cmd+V to paste into the active app.
     func copyAndPaste(_ item: ClipboardItem) {
         copyToClipboard(item)
 
-        // Delay to let the panel close and focus return to the previous app
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             Self.simulatePaste()
         }
@@ -243,7 +285,6 @@ final class ClipboardManager {
 
     private static func simulatePaste() {
         let source = CGEventSource(stateID: CGEventSourceStateID.combinedSessionState)
-        // kVK_ANSI_V = 0x09
         let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
         let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
         keyDown?.flags = CGEventFlags.maskCommand
@@ -277,7 +318,6 @@ final class ClipboardManager {
         return cachedExcludedApps
     }
 
-    /// Call when the excluded apps list changes in Settings.
     func invalidateExcludedAppsCache() {
         excludedAppsNeedsRefresh = true
     }

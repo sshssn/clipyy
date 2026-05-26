@@ -3,9 +3,6 @@ import SwiftData
 
 // MARK: - Keyboard Navigator
 
-/// Handles arrow key / Return / Escape via NSEvent local monitor.
-/// SwiftUI's .onKeyPress doesn't work on a non-activating NSPanel,
-/// so we intercept key events at the AppKit level instead.
 @Observable
 final class PanelNavigator {
     var selectedIndex = 0
@@ -29,7 +26,6 @@ final class PanelNavigator {
     }
 
     private func handleKey(_ event: NSEvent) -> NSEvent? {
-        // Allow text input through to search field, but intercept nav keys
         let isTextField = NSApp.keyWindow?.firstResponder is NSTextView
 
         switch event.keyCode {
@@ -53,32 +49,52 @@ final class PanelNavigator {
 
 // MARK: - Precomputed layout data
 
-/// Holds the result of a single filter + group pass so it isn't recomputed
-/// multiple times per body evaluation.
 private struct PanelLayout {
     let flat: [ClipboardItem]
+    let pageItems: [ClipboardItem]
     let grouped: [(group: DateGroup, items: [ClipboardItem])]
-    let indexMap: [PersistentIdentifier: Int] // O(1) index lookup
+    let indexMap: [PersistentIdentifier: Int]
+    let totalPages: Int
+    let categoryCounts: [ContentCategory: Int]
+    let totalFilteredCount: Int
 
-    init(allItems: [ClipboardItem], searchText: String, pinnedOnly: Bool) {
-        var items = allItems
-
+    init(allItems: [ClipboardItem], searchText: String, pinnedOnly: Bool,
+         selectedCategory: ContentCategory?, page: Int, pageSize: Int) {
+        var baseFiltered = allItems
         if pinnedOnly {
-            items = items.filter { $0.isPinned }
+            baseFiltered = baseFiltered.filter { $0.isPinned }
         }
-
         if !searchText.isEmpty {
-            items = items.filter {
+            baseFiltered = baseFiltered.filter {
                 $0.plainText.localizedCaseInsensitiveContains(searchText)
             }
         }
 
+        self.totalFilteredCount = baseFiltered.count
+
+        var counts: [ContentCategory: Int] = [:]
+        for item in baseFiltered {
+            counts[item.category, default: 0] += 1
+        }
+        self.categoryCounts = counts
+
+        var items = baseFiltered
+        if let cat = selectedCategory {
+            items = items.filter { $0.category == cat }
+        }
         self.flat = items
-        self.grouped = items.groupedByDate()
+
+        let ps = max(1, pageSize)
+        self.totalPages = max(1, (items.count + ps - 1) / ps)
+        let clampedPage = max(0, min(page, totalPages - 1))
+        let pageSlice = Array(items.dropFirst(clampedPage * ps).prefix(ps))
+        self.pageItems = pageSlice
+
+        self.grouped = pageSlice.groupedByDate()
 
         var map: [PersistentIdentifier: Int] = [:]
-        map.reserveCapacity(items.count)
-        for (i, item) in items.enumerated() {
+        map.reserveCapacity(pageSlice.count)
+        for (i, item) in pageSlice.enumerated() {
             map[item.id] = i
         }
         self.indexMap = map
@@ -95,20 +111,32 @@ struct ClipboardPanelView: View {
     @State private var searchText = ""
     @State private var showPinnedOnly = false
     @State private var navigator = PanelNavigator()
+    @State private var selectedCategory: ContentCategory? = nil
+    @State private var currentPage = 0
+    @State private var expandedItemID: PersistentIdentifier? = nil
+    @State private var revealedSensitiveIDs: Set<PersistentIdentifier> = []
 
     let clipboardManager: ClipboardManager
     let onDismiss: () -> Void
 
-    /// Single computation per render pass.
     private var layout: PanelLayout {
-        PanelLayout(allItems: allItems, searchText: searchText, pinnedOnly: showPinnedOnly)
+        PanelLayout(
+            allItems: allItems,
+            searchText: searchText,
+            pinnedOnly: showPinnedOnly,
+            selectedCategory: selectedCategory,
+            page: currentPage,
+            pageSize: Constants.itemsPerPage
+        )
     }
 
     var body: some View {
-        let data = layout // evaluate once
+        let data = layout
 
         VStack(spacing: 0) {
             toolbarArea
+
+            categoryTabBar(data: data)
 
             Divider()
 
@@ -126,6 +154,8 @@ struct ClipboardPanelView: View {
                                     ClipboardListRow(
                                         item: item,
                                         isSelected: idx == navigator.selectedIndex,
+                                        isExpanded: expandedItemID == item.id,
+                                        isSensitiveRevealed: revealedSensitiveIDs.contains(item.id),
                                         onCopy: {
                                             pasteItem(item)
                                         },
@@ -135,6 +165,22 @@ struct ClipboardPanelView: View {
                                         },
                                         onDelete: {
                                             clipboardManager.deleteItem(item)
+                                        },
+                                        onToggleExpand: {
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                expandedItemID = expandedItemID == item.id ? nil : item.id
+                                            }
+                                        },
+                                        onToggleReveal: {
+                                            if revealedSensitiveIDs.contains(item.id) {
+                                                revealedSensitiveIDs.remove(item.id)
+                                            } else {
+                                                revealedSensitiveIDs.insert(item.id)
+                                            }
+                                        },
+                                        onSetCategory: { newCategory in
+                                            item.category = newCategory
+                                            try? modelContext.save()
                                         }
                                     )
                                     .id(item.id)
@@ -144,25 +190,29 @@ struct ClipboardPanelView: View {
                         .padding(12)
                     }
                     .onChange(of: navigator.selectedIndex) { _, newIndex in
-                        guard newIndex >= 0, newIndex < data.flat.count else { return }
-                        proxy.scrollTo(data.flat[newIndex].id, anchor: .center)
+                        guard newIndex >= 0, newIndex < data.pageItems.count else { return }
+                        proxy.scrollTo(data.pageItems[newIndex].id, anchor: .center)
                     }
                 }
+            }
+
+            if data.totalPages > 1 {
+                Divider()
+                paginationFooter(data: data)
             }
         }
         .frame(width: Constants.panelWidth, height: Constants.panelHeight)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .onAppear {
-            navigator.itemCount = data.flat.count
+            navigator.itemCount = data.pageItems.count
             navigator.onDismiss = { [onDismiss] in onDismiss() }
-            // Paste callback reads layout.flat at call-time via self
             navigator.onPasteIndex = { [weak clipboardManager] index in
                 let currentLayout = self.layout
-                guard index >= 0, index < currentLayout.flat.count,
+                guard index >= 0, index < currentLayout.pageItems.count,
                       let manager = clipboardManager else { return }
                 onDismiss()
-                manager.copyAndPaste(currentLayout.flat[index])
+                manager.copyAndPaste(currentLayout.pageItems[index])
             }
             navigator.startMonitoring()
         }
@@ -174,16 +224,27 @@ struct ClipboardPanelView: View {
         }
         .onChange(of: searchText) { _, _ in
             navigator.selectedIndex = 0
+            currentPage = 0
             updateNavigatorCount()
         }
         .onChange(of: showPinnedOnly) { _, _ in
+            navigator.selectedIndex = 0
+            currentPage = 0
+            updateNavigatorCount()
+        }
+        .onChange(of: selectedCategory) { _, _ in
+            navigator.selectedIndex = 0
+            currentPage = 0
+            updateNavigatorCount()
+        }
+        .onChange(of: currentPage) { _, _ in
             navigator.selectedIndex = 0
             updateNavigatorCount()
         }
     }
 
     private func updateNavigatorCount() {
-        let count = layout.flat.count
+        let count = layout.pageItems.count
         navigator.itemCount = count
         if navigator.selectedIndex >= count {
             navigator.selectedIndex = max(0, count - 1)
@@ -195,6 +256,38 @@ struct ClipboardPanelView: View {
     private func pasteItem(_ item: ClipboardItem) {
         onDismiss()
         clipboardManager.copyAndPaste(item)
+    }
+
+    // MARK: - Category Tab Bar
+
+    private func categoryTabBar(data: PanelLayout) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                CategoryTab(
+                    icon: "tray.full",
+                    label: "All",
+                    count: data.totalFilteredCount,
+                    isSelected: selectedCategory == nil
+                ) {
+                    selectedCategory = nil
+                }
+
+                ForEach(ContentCategory.allCases, id: \.self) { cat in
+                    let count = data.categoryCounts[cat] ?? 0
+                    CategoryTab(
+                        icon: cat.iconName,
+                        label: cat.label,
+                        count: count,
+                        isSelected: selectedCategory == cat
+                    ) {
+                        selectedCategory = selectedCategory == cat ? nil : cat
+                    }
+                    .opacity(count > 0 ? 1.0 : 0.45)
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+        .padding(.vertical, 6)
     }
 
     // MARK: - Toolbar
@@ -253,6 +346,44 @@ struct ClipboardPanelView: View {
         .padding(.vertical, 10)
     }
 
+    // MARK: - Pagination Footer
+
+    private func paginationFooter(data: PanelLayout) -> some View {
+        HStack(spacing: 12) {
+            Button {
+                currentPage = max(0, currentPage - 1)
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .disabled(currentPage == 0)
+            .foregroundStyle(currentPage == 0 ? .quaternary : .secondary)
+
+            Text("Page \(currentPage + 1) of \(data.totalPages)")
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary)
+
+            Button {
+                currentPage = min(data.totalPages - 1, currentPage + 1)
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .disabled(currentPage >= data.totalPages - 1)
+            .foregroundStyle(currentPage >= data.totalPages - 1 ? .quaternary : .secondary)
+
+            Spacer()
+
+            Text("\(data.flat.count) items")
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
     // MARK: - Empty State
 
     private var emptyState: some View {
@@ -268,6 +399,43 @@ struct ClipboardPanelView: View {
                 .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Category Tab
+
+private struct CategoryTab: View {
+    let icon: String
+    let label: String
+    let count: Int
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 10))
+                Text(label)
+                    .font(.system(size: 11, weight: .medium))
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(isSelected ? Color.accentColor.opacity(0.2) : Color.white.opacity(0.05))
+            .foregroundStyle(isSelected ? .primary : .secondary)
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(isSelected ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -291,46 +459,89 @@ struct SelectionHighlightModifier: ViewModifier {
 struct ClipboardListRow: View {
     let item: ClipboardItem
     let isSelected: Bool
+    let isExpanded: Bool
+    let isSensitiveRevealed: Bool
     let onCopy: () -> Void
     let onTogglePin: () -> Void
     let onDelete: () -> Void
+    let onToggleExpand: () -> Void
+    let onToggleReveal: () -> Void
+    let onSetCategory: (ContentCategory) -> Void
 
     @State private var isHovering = false
 
+    private var isLongContent: Bool {
+        item.plainText.count > 100
+    }
+
+    private var isSensitive: Bool {
+        item.category == .sensitive
+    }
+
     var body: some View {
-        HStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: item.itemType.iconName)
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 24)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    Image(systemName: item.itemType.iconName)
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 24)
 
-                contentPreview
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    contentPreview
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                VStack(alignment: .trailing, spacing: 2) {
-                    if let appName = item.sourceAppName {
-                        Text(appName)
+                    VStack(alignment: .trailing, spacing: 2) {
+                        categoryBadge
+
+                        if let appName = item.sourceAppName {
+                            Text(appName)
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                        }
+                        Text(item.createdAt.shortRelative)
                             .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.quaternary)
                     }
-                    Text(item.createdAt.shortRelative)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.quaternary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+                .onTapGesture { onCopy() }
+
+                HStack(spacing: 2) {
+                    if isSensitive {
+                        Image(systemName: isSensitiveRevealed ? "eye.fill" : "eye.slash")
+                            .font(.system(size: 11))
+                            .foregroundStyle(isSensitiveRevealed ? .orange : .secondary.opacity(0.5))
+                            .frame(width: 24, height: 24)
+                            .contentShape(Rectangle())
+                            .onTapGesture { onToggleReveal() }
+                            .help(isSensitiveRevealed ? "Hide" : "Reveal")
+                    }
+
+                    if isLongContent {
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary.opacity(0.5))
+                            .frame(width: 24, height: 24)
+                            .contentShape(Rectangle())
+                            .onTapGesture { onToggleExpand() }
+                            .help(isExpanded ? "Collapse" : "Expand")
+                    }
+
+                    Image(systemName: item.isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 11))
+                        .foregroundStyle(item.isPinned ? .orange : .secondary.opacity(0.5))
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                        .onTapGesture { onTogglePin() }
+                        .help(item.isPinned ? "Unpin" : "Pin")
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .contentShape(Rectangle())
-            .onTapGesture { onCopy() }
 
-            Image(systemName: item.isPinned ? "pin.fill" : "pin")
-                .font(.system(size: 11))
-                .foregroundStyle(item.isPinned ? .orange : .secondary.opacity(0.5))
-                .frame(width: 28, height: 28)
-                .contentShape(Rectangle())
-                .onTapGesture { onTogglePin() }
-                .help(item.isPinned ? "Unpin" : "Pin")
+            if isExpanded && isLongContent {
+                expandedContent
+            }
         }
         .background(
             RoundedRectangle(cornerRadius: Constants.rowCornerRadius)
@@ -341,9 +552,56 @@ struct ClipboardListRow: View {
         .contextMenu {
             Button("Copy & Paste") { onCopy() }
             Divider()
+            if isSensitive {
+                Button(isSensitiveRevealed ? "Hide Content" : "Reveal Content") { onToggleReveal() }
+            }
+            if isLongContent {
+                Button(isExpanded ? "Collapse" : "Expand Full Content") { onToggleExpand() }
+            }
             Button(item.isPinned ? "Unpin" : "Pin") { onTogglePin() }
+            if item.itemType != .image {
+                Divider()
+                Menu("Set Category") {
+                    ForEach(ContentCategory.allCases.filter { $0 != .image }, id: \.self) { cat in
+                        Button {
+                            onSetCategory(cat)
+                        } label: {
+                            HStack {
+                                Label(cat.label, systemImage: cat.iconName)
+                                if item.category == cat {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             Divider()
             Button("Delete", role: .destructive) { onDelete() }
+        }
+    }
+
+    @ViewBuilder
+    private var categoryBadge: some View {
+        if item.category != .text {
+            Text(item.category.label)
+                .font(.system(size: 9, weight: .medium))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(categoryColor.opacity(0.15))
+                .foregroundStyle(categoryColor)
+                .clipShape(Capsule())
+        }
+    }
+
+    private var categoryColor: Color {
+        switch item.category {
+        case .code:      return .blue
+        case .link:      return .purple
+        case .image:     return .green
+        case .sensitive: return .red
+        case .file:      return .orange
+        case .text:      return .gray
         }
     }
 
@@ -352,7 +610,13 @@ struct ClipboardListRow: View {
         switch item.itemType {
         case .image:
             HStack(spacing: 6) {
-                if let data = item.imageData, let nsImage = NSImage(data: data) {
+                if let thumbData = item.thumbnailData, let nsImage = NSImage(data: thumbData) {
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 32, height: 32)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                } else if let data = item.imageData, let nsImage = NSImage(data: data) {
                     Image(nsImage: nsImage)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
@@ -374,11 +638,71 @@ struct ClipboardListRow: View {
                     .foregroundStyle(.primary)
             }
         default:
-            Text(item.plainText)
-                .font(.system(size: 12))
-                .lineLimit(2)
-                .foregroundStyle(.primary)
+            VStack(alignment: .leading, spacing: 2) {
+                if isSensitive && !isSensitiveRevealed {
+                    Text(maskedText(item.plainText))
+                        .font(.system(size: 12, design: .monospaced))
+                        .lineLimit(2)
+                        .foregroundStyle(.primary)
+                } else {
+                    Text(item.plainText)
+                        .font(.system(size: 12))
+                        .lineLimit(2)
+                        .foregroundStyle(.primary)
+                }
+
+                if isLongContent {
+                    Text(formatCharCount(item.plainText.count))
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.quaternary)
+                }
+            }
         }
+    }
+
+    @ViewBuilder
+    private var expandedContent: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Divider()
+                .padding(.horizontal, 10)
+
+            ScrollView {
+                Text(isSensitive && !isSensitiveRevealed
+                     ? maskedText(item.plainText)
+                     : (item.textContent ?? item.plainText))
+                    .font(.system(size: 11, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 44)
+            }
+            .frame(maxHeight: 200)
+
+            HStack {
+                Spacer()
+                Text("\(item.plainText.count) characters")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(.quaternary)
+                    .padding(.trailing, 10)
+            }
+            .padding(.bottom, 4)
+        }
+    }
+
+    private func maskedText(_ text: String) -> String {
+        let visibleCount = min(8, text.count / 4)
+        let prefix = String(text.prefix(visibleCount))
+        let dotsCount = min(20, max(4, text.count - visibleCount))
+        return prefix + String(repeating: "\u{2022}", count: dotsCount)
+    }
+
+    private func formatCharCount(_ count: Int) -> String {
+        if count >= 1_000_000 {
+            return String(format: "%.1fM chars", Double(count) / 1_000_000.0)
+        }
+        if count >= 1000 {
+            return String(format: "%.1fK chars", Double(count) / 1000.0)
+        }
+        return "\(count) chars"
     }
 }
 
