@@ -14,7 +14,6 @@
   <img src="https://img.shields.io/badge/swift-6-F05138?style=flat&logo=swift&logoColor=white" alt="Swift 6" />
   <img src="https://img.shields.io/badge/UI-SwiftUI-007AFF?style=flat&logo=swift&logoColor=white" alt="SwiftUI" />
   <img src="https://img.shields.io/badge/storage-SwiftData-34C759?style=flat" alt="SwiftData" />
-  <img src="https://img.shields.io/github/license/sshssn/clipyy?style=flat" alt="License" />
 </p>
 
 ---
